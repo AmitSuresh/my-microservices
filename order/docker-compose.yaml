@@ -1,0 +1,86 @@
+services:
+  traefik:
+    image: traefik:v3.1
+    init: true
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.grpc.address=:9082
+    ports: ['80:80', '8080:8080', '9082:9082']
+    volumes: ['/var/run/docker.sock:/var/run/docker.sock:ro']
+    networks: [web]
+  order_service:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    init: true
+    depends_on: [db]
+    ports: ['9099:9099']
+    restart: unless-stopped
+    volumes: ['~/.aws:/root/.aws:ro']
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.order-service.rule=Host(`order-service.localhost`)
+      - traefik.http.routers.order-service.entrypoints=web
+      - traefik.http.services.order-service.loadbalancer.server.port=9099
+    environment:
+      SERVER_ADDR: :9099
+      GIN_MODE: debug
+      LOG_GROUP_NAME: order-group
+      LOG_STREAM_NAME: order-stream
+      CLOUDWATCH_LOG_GROUP_NAME: /aws/order-service/logs
+    networks: [web]
+  db:
+    image: postgres:17.0-alpine
+    init: true
+    restart: always
+    volumes: ['pgdata:/var/lib/postgresql/data']
+    shm_size: 128mb
+    ports: ['5432:5432']
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 5s
+    networks: [web]
+  pg-admin:
+    image: dpage/pgadmin4:8
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@email.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports: ['5430:80']
+    networks: [web]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.pg-admin.rule=Host(`pg-admin.localhost`)
+      - traefik.http.routers.pg-admin.entrypoints=web
+      - traefik.http.services.pg-admin.loadbalancer.server.port=80
+  prometheus:
+    image: prom/prometheus:v3.0.0
+    container_name: prometheus
+    ports: ['9090:9090']
+    volumes:
+      - prometheus_data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
+    depends_on: [order_service]
+    networks: [web]
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    ports: ['6061:3000']
+    environment: [GF_SECURITY_ADMIN_PASSWORD=admin]
+    depends_on: [prometheus]
+    restart: unless-stopped
+    networks: [web]
+volumes:
+  pgdata:
+  prometheus_data:
+networks:
+  web:
+    external: true

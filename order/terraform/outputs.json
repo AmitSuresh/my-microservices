@@ -1,0 +1,7 @@
+{
+  "cloudwatch_log_group_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "/aws/order-service/logs"
+  }
+}
